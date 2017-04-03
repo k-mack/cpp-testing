@@ -1,0 +1,181 @@
+apply plugin: 'cpp'
+apply from: "${rootDir}/gradle/platform-config.gradle"
+apply from: "${rootDir}/gradle/catch-testing-framework.gradle"
+
+// TODO visual studio plugin: one solution file for all projects
+model {
+    buildTypes {
+        release
+        debug
+        codeCoverage
+    }
+    toolChains {
+        gcc(Gcc) {
+            eachPlatform {
+                // When a codeCoverage executable is built, it statically links
+                // the libraries that are under test into the test driver
+                // executable. By default, only the object files that are
+                // required for the executable are statically linked. Because
+                // we want to measure code coverage (i.e., understand what code
+                // is and is not executed during the execution of the test
+                // driver), we want to link in object files are are not
+                // required by the executable. This way the code coverage
+                // reports will show us what object files aren't even covered
+                // by the test driver.
+                //
+                // Linking the entire static library into the executable is
+                // done using the "-Wl,--whole-archive" linker option.
+                //
+                // This is a short-coming of Gradle. Ideally, there should be a
+                // to modify the library linking options when declaring a
+                // dependency. However, Gradle gives us the ability to modify
+                // the tool-chain's linker options here, so this is an easy
+                // workaround.
+                linker.withArguments { args ->
+                    def liboperators = ''
+                    args.each {
+                        if (it.endsWith('liboperators.a')) {
+                            liboperators = it
+                        }
+                    }
+                    if (!liboperators.isEmpty() && args.remove(liboperators)) {
+                        args << '-Wl,--whole-archive'
+                        args << "${liboperators}"
+                        args << '-Wl,--no-whole-archive'
+                    }
+                }
+            }
+        }
+    }
+    components {
+        operators(NativeLibrarySpec)
+
+        // Gradle does not support the Catch testing framework natively. What
+        // we'll do is create an executable with Catch, build and run it
+        // to do our testing (see tasks below).
+        operatorsTest(NativeExecutableSpec) {
+            sources {
+                cpp {
+                    source {
+                        srcDir 'src/operatorsTest/cpp'
+                        exclude '.*' // ignore hidden files (thanks, VIM)
+                    }
+                    lib library: 'catch_testing', linkage: 'api'
+                    lib library: 'operators', linkage: 'static'
+                }
+            }
+        }
+    }
+    binaries {
+        all {
+            if (toolChain in Gcc) {
+                cppCompiler.args '-Wall'
+                if (buildType == buildTypes.release) {
+                    cppCompiler.args '-O3'
+                } else if (buildType == buildTypes.debug
+                        || buildType == buildTypes.codeCoverage) {
+                    cppCompiler.args '-g', '-O0'
+                    if (buildType == buildTypes.codeCoverage) {
+                        cppCompiler.args '-fprofile-arcs', '-ftest-coverage'
+                        linker.args '-lgcov'
+                    }
+                }
+            }
+        }
+    }
+    tasks {
+        testCodeCoverage(Exec) {
+            description = 'Run x64 test suite with code coverage options'
+            group = 'Test'
+            $.components.operatorsTest.binaries.each {
+                if (it.buildable && it.targetPlatform.architecture.amd64
+                        && it.buildType == buildTypes.codeCoverage) {
+                    dependsOn tasks.getByPath("operatorsTestLinux64CodeCoverageExecutable")
+
+                    // We not only want to build the test driver with the
+                    // supporting code coverage flags, but we want to run it.
+                    // We need to run the test driver to generate gcov's *.gcda
+                    // files.
+                    commandLine it.executable.file
+                }
+            }
+            standardOutput = new ByteArrayOutputStream()
+            ext.output = {
+                return standardOutput.toString()
+            }
+        }
+        testX86(Exec) {
+            description = 'Run x86 test suite on release build'
+            group = 'Test'
+            $.components.operatorsTest.binaries.each {
+                if (it.buildable && it.targetPlatform.architecture.i386
+                        && it.buildType == buildTypes.release) {
+                    dependsOn tasks.getByPath("operatorsTestLinux32ReleaseExecutable")
+                    commandLine it.executable.file
+                }
+            }
+            standardOutput = new ByteArrayOutputStream()
+            ext.output = {
+                return standardOutput.toString()
+            }
+        }
+        testX64(Exec) {
+            description = 'Run x64 test suite on release build'
+            group = 'Test'
+            $.components.operatorsTest.binaries.each {
+                if (it.buildable && it.targetPlatform.architecture.amd64
+                        && it.buildType == buildTypes.release) {
+                    dependsOn tasks.getByPath("operatorsTestLinux64ReleaseExecutable")
+                    commandLine it.executable.file
+                }
+            }
+            standardOutput = new ByteArrayOutputStream()
+            ext.output = {
+                return standardOutput.toString()
+            }
+        }
+        printTestReports(Task) {
+            dependsOn testX86, testX64
+            description = 'Run x86 and x64 test suites and print results to console'
+            group = 'Test'
+
+            doLast {
+                (1..30).each { print '=' }
+                print ' x86 Test Results '
+                (1..31).each { print '=' }
+                println()
+                println testX86.output()
+
+                (1..30).each { print '=' }
+                print ' x64 Test Results '
+                (1..31).each { print '=' }
+                println()
+                println testX64.output()
+            }
+        }
+        writeTestReports(Task) {
+            dependsOn testX86, testX64
+            description = 'Run x86 and x64 test suites and write results to file'
+            group = 'Test'
+            
+            def x86Report = new File("${buildDir}/reports/tests/x86_report.txt")
+            def x64Report = new File("${buildDir}/reports/tests/x64_report.txt")
+            outputs.dir new File("${buildDir}/reports/tests")
+            outputs.files x86Report, x64Report
+            doLast {
+                x86Report.parentFile.mkdirs()
+                x64Report.parentFile.mkdirs()
+                x86Report << testX86.output()
+                x64Report << testX64.output()
+            }
+        }
+        test(Task) {
+            dependsOn printTestReports, writeTestReports
+            description = 'Run all tests and print and write their results'
+            group = 'Test'
+        }
+    }
+    tasks.check {
+        dependsOn test
+    }
+}

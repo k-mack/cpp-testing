@@ -1,0 +1,21 @@
+include 'operators'
+
+rootProject.name = 'gradle-catch'
+
+// By default, Gradle will look for a "build.gradle" in each sub-project
+// directory. We aren't using that standard, so here we are telling Gradle how
+// the build files are named:
+// 
+// Project name: camelcase
+// Project directory: project name converted to hyphenated terms
+// Project build file: same as project directory
+rootProject.children.each { project ->
+    String fileBaseName = project.name.replaceAll("\\p{Upper}") {
+        "-${it}.toLowerCase()"
+    }
+    String projectDirName = "subprojects/${fileBaseName}"
+    project.projectDir = new File(settingsDir, projectDirName)
+    project.buildFileName = "${fileBaseName}.gradle"
+    assert project.projectDir.isDirectory()
+    assert project.buildFile.isFile()
+}

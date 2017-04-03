@@ -1,0 +1,33 @@
+model {
+    // toolChains does not need to explicity specified, but doing it here as a
+    // reminder for how to do it.
+    toolChains {
+        visualCpp(VisualCpp)
+        gcc(Gcc)
+    }
+    platforms {
+        win32 {
+            operatingSystem "windows"
+            architecture "x86"
+        }
+        win64 {
+            operatingSystem "windows"
+            architecture "x86_64"
+        }
+        linux32 {
+            operatingSystem "linux"
+            architecture "x86"
+        }
+        linux64 {
+            operatingSystem "linux"
+            architecture "x86_64"
+        }
+    }
+    components {
+        all {
+            ["win32", "win64", "linux32", "linux64"].each {
+                targetPlatform it
+            }
+        }
+    }
+}

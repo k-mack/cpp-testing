@@ -1,0 +1,9 @@
+model {
+    repositories {
+        libs(PrebuiltLibraries) {
+            catch_testing {
+                headers.srcDir "${rootDir}/3rdparty/catch/headers"
+            }
+        }
+    }
+}

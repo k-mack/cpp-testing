@@ -1,0 +1,56 @@
+model {
+    tasks {
+        lcovCodeCoverage(Exec) {
+            description = 'Generate code coverage data using lcov'
+            group = 'Test'
+            subprojects.each {
+                dependsOn it.tasks.getByPath("${it.path}:testCodeCoverage")
+            }
+            def outputFile = "${rootDir}/build/code-coverage/lcov/lcov_output.info"
+            new File(outputFile).parentFile.mkdirs()
+            workingDir "${rootDir}"
+            commandLine(
+                    'lcov',
+                    '--capture',
+                    '--directory', '.',
+                    '--output-file', "${outputFile}")
+            ext.lcovOutputFile = outputFile
+        }
+        genHtmlCodeCoverage(Exec) {
+            dependsOn lcovCodeCoverage
+            description = 'Generates the HTML code coverage report from lcov\'s output'
+            group = 'Test'
+            def outputDir = "${rootDir}/build/code-coverage/html"
+            new File(outputDir).mkdirs()
+            workingDir "${rootDir}"
+            commandLine(
+                    'genhtml',
+                    lcovCodeCoverage.lcovOutputFile,
+                    '--output-directory',
+                    "${outputDir}")
+            standardOutput = new ByteArrayOutputStream()
+            ext.outputDir = outputDir
+        }
+        codeCoverage(Task) {
+            dependsOn genHtmlCodeCoverage
+            description = 'Generates the code coverage report for the entire project'
+            group = 'Test'
+        }
+        openCodeCoverage(Task) {
+            dependsOn codeCoverage
+            description = 'Opens code coverage report in browser'
+            group = 'Test'
+            doLast {
+                Class.forName("java.awt.Desktop").newInstance().browse(
+                    file(genHtmlCodeCoverage.outputDir + '/index.html').toURI())
+            }
+        }
+        clean(Task) {
+            description = 'Cleans root project'
+            group = 'Build'
+            doLast {
+                delete "build"
+            }
+        }
+    }
+}
