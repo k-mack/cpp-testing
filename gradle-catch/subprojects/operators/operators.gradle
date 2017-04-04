@@ -32,18 +32,26 @@ model {
                 // dependency. However, Gradle gives us the ability to modify
                 // the tool-chain's linker options here, so this is an easy
                 // workaround.
-                if (project.hasProperty('code_coverage')) {
+                if (project.hasProperty('catch') || project.hasProperty('code_coverage')) {
                     println 'Linking whole static library'
                     linker.withArguments { args ->
                         def liboperators = ''
+                        def liboperatorsTestSuite = ''
                         args.each {
                             if (it.endsWith('liboperators.a')) {
                                 liboperators = it
+                            } else if (it.endsWith('liboperatorsTestSuite.a')) {
+                                liboperatorsTestSuite = it
                             }
                         }
                         if (!liboperators.isEmpty() && args.remove(liboperators)) {
                             args << '-Wl,--whole-archive'
                             args << "${liboperators}"
+                            args << '-Wl,--no-whole-archive'
+                        }
+                        if (!liboperatorsTestSuite.isEmpty() && args.remove(liboperatorsTestSuite)) {
+                            args << '-Wl,--whole-archive'
+                            args << "${liboperatorsTestSuite}"
                             args << '-Wl,--no-whole-archive'
                         }
                     }
@@ -54,14 +62,29 @@ model {
     components {
         operators(NativeLibrarySpec)
 
-        // Gradle does not support the Catch testing framework natively. What
-        // we'll do is create an executable with Catch, build and run it
-        // to do our testing (see tasks below).
-        operatorsTest(NativeExecutableSpec) {
+        // Gradle does not support the Catch testing framework natively.
+        // To work around this, we create an executable with only the Catch
+        // main(), and then link it against a library containing all of the
+        // tests (as well as the libraries that are under test). The test
+        // driver only contains the Catch main() in order to avoid compiling
+        // Catch multiple times (see
+        // https://github.com/philsquared/Catch/blob/master/docs/slow-compiles.md).
+        operatorsTestDriver(NativeExecutableSpec) {
             sources {
                 cpp {
                     source {
-                        srcDir 'src/operatorsTest/cpp'
+                        exclude '.*' // ignore hidden files (thanks, VIM)
+                    }
+                    lib library: 'catch_testing', linkage: 'api'
+                    lib library: 'operators', linkage: 'static'
+                    lib library: 'operatorsTestSuite', linkage: 'static'
+                }
+            }
+        }
+        operatorsTestSuite(NativeLibrarySpec) {
+            sources {
+                cpp {
+                    source {
                         exclude '.*' // ignore hidden files (thanks, VIM)
                     }
                     lib library: 'catch_testing', linkage: 'api'
