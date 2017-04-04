@@ -2,6 +2,7 @@ apply plugin: 'cpp'
 apply from: "${rootDir}/gradle/platform-config.gradle"
 apply from: "${rootDir}/gradle/catch-testing-framework.gradle"
 
+
 // TODO visual studio plugin: one solution file for all projects
 model {
     buildTypes {
@@ -31,17 +32,20 @@ model {
                 // dependency. However, Gradle gives us the ability to modify
                 // the tool-chain's linker options here, so this is an easy
                 // workaround.
-                linker.withArguments { args ->
-                    def liboperators = ''
-                    args.each {
-                        if (it.endsWith('liboperators.a')) {
-                            liboperators = it
+                if (project.hasProperty('code_coverage')) {
+                    println 'Linking whole static library'
+                    linker.withArguments { args ->
+                        def liboperators = ''
+                        args.each {
+                            if (it.endsWith('liboperators.a')) {
+                                liboperators = it
+                            }
                         }
-                    }
-                    if (!liboperators.isEmpty() && args.remove(liboperators)) {
-                        args << '-Wl,--whole-archive'
-                        args << "${liboperators}"
-                        args << '-Wl,--no-whole-archive'
+                        if (!liboperators.isEmpty() && args.remove(liboperators)) {
+                            args << '-Wl,--whole-archive'
+                            args << "${liboperators}"
+                            args << '-Wl,--no-whole-archive'
+                        }
                     }
                 }
             }
@@ -87,6 +91,10 @@ model {
         testCodeCoverage(Exec) {
             description = 'Run x64 test suite with code coverage options'
             group = 'Test'
+            if (!project.hasProperty('code_coverage')) {
+                throw new StopActionException(
+                        "Property 'code_coverage' must be defined for the codeCoverage build type")
+            }
             $.components.operatorsTest.binaries.each {
                 if (it.buildable && it.targetPlatform.architecture.amd64
                         && it.buildType == buildTypes.codeCoverage) {
