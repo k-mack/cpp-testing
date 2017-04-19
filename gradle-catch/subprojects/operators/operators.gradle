@@ -2,6 +2,20 @@ apply plugin: 'cpp'
 apply from: "${rootDir}/gradle/platform-config.gradle"
 apply from: "${rootDir}/gradle/catch-testing-framework.gradle"
 
+buildscript {
+    apply from: "${rootDir}/gradle/buildscript-utils.gradle", to: buildscript
+}
+
+import static org.apache.commons.lang3.SystemUtils.IS_OS_LINUX
+import static org.apache.commons.lang3.SystemUtils.IS_OS_WINDOWS
+
+// osName is the operating system name used in the target platforms
+def osName = 'Unknown'
+if (IS_OS_WINDOWS) {
+    osName = 'Win'
+} else if (IS_OS_LINUX) {
+    osName = 'Linux'
+}
 
 // TODO visual studio plugin: one solution file for all projects
 model {
@@ -58,6 +72,29 @@ model {
                             args << '-Wl,--whole-archive'
                             args << "${liboperatorsTestSuite}"
                             args << '-Wl,--no-whole-archive'
+                        }
+                    }
+                }
+            }
+        }
+        visualCpp(VisualCpp) {
+            eachPlatform {
+                if (project.hasProperty('catch') || project.hasProperty('code_coverage')) {
+                    linker.withArguments { args ->
+                        def liboperators = ''
+                        def liboperatorsTestSuite = ''
+                        args.each {
+                            if (it.endsWith('operators.lib')) {
+                                liboperators = it
+                            } else if (it.endsWith('operatorsTestSuite.lib')) {
+                                liboperatorsTestSuite = it
+                            }
+                        }
+                        if (!liboperators.isEmpty() && args.remove(liboperators)) {
+                            args << "/WHOLEARCHIVE:${liboperators}"
+                        }
+                        if (!liboperatorsTestSuite.isEmpty() && args.remove(liboperatorsTestSuite)) {
+                            args << "/WHOLEARCHIVE:${liboperatorsTestSuite}"
                         }
                     }
                 }
@@ -152,7 +189,7 @@ model {
             $.components.operatorsTestDriver.binaries.each {
                 if (it.buildable && it.targetPlatform.architecture.i386
                         && it.buildType == buildTypes.release) {
-                    dependsOn tasks.getByPath('operatorsTestDriverLinux32ReleaseExecutable')
+                    dependsOn tasks.getByPath("operatorsTestDriver${osName}32ReleaseExecutable")
                     commandLine it.executable.file
                 }
             }
@@ -174,7 +211,7 @@ model {
             $.components.operatorsTestDriver.binaries.each {
                 if (it.buildable && it.targetPlatform.architecture.amd64
                         && it.buildType == buildTypes.release) {
-                    dependsOn tasks.getByPath('operatorsTestDriverLinux64ReleaseExecutable')
+                    dependsOn tasks.getByPath("operatorsTestDriver${osName}64ReleaseExecutable")
                     commandLine it.executable.file
                 }
             }
