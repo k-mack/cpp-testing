@@ -130,7 +130,7 @@ model {
                         exclude '.*' // ignore hidden files (thanks, VIM)
                     }
                     lib library: 'catch_testing', linkage: 'api'
-                    lib library: 'operators', linkage: 'static'
+                    lib library: 'operators', linkage: 'api'
                 }
             }
         }
