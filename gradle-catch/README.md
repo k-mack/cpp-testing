@@ -85,3 +85,12 @@ to get Catch, GCOV, and LCOV glued together using Gradle. It actually falls
 nicely into the work-around I described above for Catch in that you need to
 statically link the whole test code library into the test driver to get an
 accurate code coverage measurement.
+
+If you have GCOV and LCOV installed, run
+
+```
+gradlew openCodeCoverage -Pcode_coverage
+```
+
+This will run the code coverage tasks and open your browser to generated HTML
+output from LCOV.
