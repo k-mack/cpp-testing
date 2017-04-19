@@ -33,7 +33,7 @@ model {
                 // required for the executable are statically linked. Because
                 // we want to measure code coverage (i.e., understand what code
                 // is and is not executed during the execution of the test
-                // driver), we want to link in object files are are not
+                // driver), we want to link in object files that are not
                 // required by the executable. This way the code coverage
                 // reports will show us what object files aren't even covered
                 // by the test driver.
