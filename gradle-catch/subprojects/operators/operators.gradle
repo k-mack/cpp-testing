@@ -27,13 +27,18 @@ model {
                 // Linking the entire static library into the executable is
                 // done using the "-Wl,--whole-archive" linker option.
                 //
+                // We don't always want to link the whole archive into the
+                // executable, only when we are testing with catch and when
+                // code coverage is to be measured. Thus, we constrain this by
+                // checking for the 'catch' and 'code_coverage' properties,
+                // respectively.
+                //
                 // This is a short-coming of Gradle. Ideally, there should be a
-                // to modify the library linking options when declaring a
+                // way to modify the library linking options when declaring a
                 // dependency. However, Gradle gives us the ability to modify
                 // the tool-chain's linker options here, so this is an easy
                 // workaround.
                 if (project.hasProperty('catch') || project.hasProperty('code_coverage')) {
-                    println 'Linking whole static library'
                     linker.withArguments { args ->
                         def liboperators = ''
                         def liboperatorsTestSuite = ''
@@ -94,6 +99,9 @@ model {
         }
     }
     binaries {
+        withType(SharedLibraryBinarySpec) {
+            buildable = false // only want static libraries
+        }
         all {
             if (toolChain in Gcc) {
                 cppCompiler.args '-Wall'
@@ -114,14 +122,10 @@ model {
         testCodeCoverage(Exec) {
             description = 'Run x64 test suite with code coverage options'
             group = 'Test'
-            if (!project.hasProperty('code_coverage')) {
-                throw new StopActionException(
-                        "Property 'code_coverage' must be defined for the codeCoverage build type")
-            }
-            $.components.operatorsTest.binaries.each {
+            $.components.operatorsTestDriver.binaries.each {
                 if (it.buildable && it.targetPlatform.architecture.amd64
                         && it.buildType == buildTypes.codeCoverage) {
-                    dependsOn tasks.getByPath("operatorsTestLinux64CodeCoverageExecutable")
+                    dependsOn tasks.getByPath('operatorsTestDriverLinux64CodeCoverageExecutable')
 
                     // We not only want to build the test driver with the
                     // supporting code coverage flags, but we want to run it.
@@ -134,35 +138,56 @@ model {
             ext.output = {
                 return standardOutput.toString()
             }
+            doLast {
+                if (!project.hasProperty('code_coverage')) {
+                    throw new GradleException(
+                            "Property 'code_coverage' must be defined"
+                            + " for the build type 'codeCoverage'")
+                }
+            }
         }
         testX86(Exec) {
             description = 'Run x86 test suite on release build'
             group = 'Test'
-            $.components.operatorsTest.binaries.each {
+            $.components.operatorsTestDriver.binaries.each {
                 if (it.buildable && it.targetPlatform.architecture.i386
                         && it.buildType == buildTypes.release) {
-                    dependsOn tasks.getByPath("operatorsTestLinux32ReleaseExecutable")
+                    dependsOn tasks.getByPath('operatorsTestDriverLinux32ReleaseExecutable')
                     commandLine it.executable.file
                 }
             }
             standardOutput = new ByteArrayOutputStream()
             ext.output = {
                 return standardOutput.toString()
+            }
+            doLast {
+                if (!project.hasProperty('catch')) {
+                    throw new GradleException(
+                            "Property 'catch' must be defined for the task"
+                            + " '${name}'")
+                }
             }
         }
         testX64(Exec) {
             description = 'Run x64 test suite on release build'
             group = 'Test'
-            $.components.operatorsTest.binaries.each {
+            $.components.operatorsTestDriver.binaries.each {
                 if (it.buildable && it.targetPlatform.architecture.amd64
                         && it.buildType == buildTypes.release) {
-                    dependsOn tasks.getByPath("operatorsTestLinux64ReleaseExecutable")
+                    dependsOn tasks.getByPath('operatorsTestDriverLinux64ReleaseExecutable')
                     commandLine it.executable.file
                 }
             }
             standardOutput = new ByteArrayOutputStream()
             ext.output = {
                 return standardOutput.toString()
+            }
+            doLast {
+                if (!project.hasProperty('catch')) {
+                    throw new GradleException(
+                            "Property 'catch' must be defined for the task"
+                            + " '${name}'")
+                }
             }
         }
         printTestReports(Task) {
