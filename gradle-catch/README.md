@@ -70,7 +70,8 @@ only applied when either the property `catch` or `code_coverage` is defined.
 So, if we want to run the tests, then we need to do so using
 
 ```
-gradlew test -Pcatch
+gradlew runCatchTestSuites -Pcatch
+// or: gradlew check -Pcatch
 ```
 
 If we don't define one of those properties (`code_coverage` needs to be defined

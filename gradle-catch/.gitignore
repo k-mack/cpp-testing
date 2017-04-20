@@ -17,6 +17,8 @@ tags
 ### Gradle ###
 .gradle
 /build/
+/buildSrc/build
+/buildSrc/.gradle
 /subprojects/*/build
 
 # Ignore Gradle GUI config

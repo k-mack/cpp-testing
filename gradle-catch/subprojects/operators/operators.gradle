@@ -1,21 +1,6 @@
 apply plugin: 'cpp'
 apply from: "${rootDir}/gradle/platform-config.gradle"
-apply from: "${rootDir}/gradle/catch-testing-framework.gradle"
-
-buildscript {
-    apply from: "${rootDir}/gradle/buildscript-utils.gradle", to: buildscript
-}
-
-import static org.apache.commons.lang3.SystemUtils.IS_OS_LINUX
-import static org.apache.commons.lang3.SystemUtils.IS_OS_WINDOWS
-
-// osName is the operating system name used in the target platforms
-def osName = 'Unknown'
-if (IS_OS_WINDOWS) {
-    osName = 'Win'
-} else if (IS_OS_LINUX) {
-    osName = 'Linux'
-}
+apply from: "${rootDir}/gradle/plugins/catch-plugin.gradle"
 
 // TODO visual studio plugin: one solution file for all projects
 model {
@@ -23,83 +8,6 @@ model {
         release
         debug
         codeCoverage
-    }
-    toolChains {
-        gcc(Gcc) {
-            eachPlatform {
-                // When a codeCoverage executable is built, it statically links
-                // the libraries that are under test into the test driver
-                // executable. By default, only the object files that are
-                // required for the executable are statically linked. Because
-                // we want to measure code coverage (i.e., understand what code
-                // is and is not executed during the execution of the test
-                // driver), we want to link in object files that are not
-                // required by the executable. This way the code coverage
-                // reports will show us what object files aren't even covered
-                // by the test driver.
-                //
-                // Linking the entire static library into the executable is
-                // done using the "-Wl,--whole-archive" linker option.
-                //
-                // We don't always want to link the whole archive into the
-                // executable, only when we are testing with catch and when
-                // code coverage is to be measured. Thus, we constrain this by
-                // checking for the 'catch' and 'code_coverage' properties,
-                // respectively.
-                //
-                // This is a short-coming of Gradle. Ideally, there should be a
-                // way to modify the library linking options when declaring a
-                // dependency. However, Gradle gives us the ability to modify
-                // the tool-chain's linker options here, so this is an easy
-                // workaround.
-                if (project.hasProperty('catch') || project.hasProperty('code_coverage')) {
-                    linker.withArguments { args ->
-                        def liboperators = ''
-                        def liboperatorsTestSuite = ''
-                        args.each {
-                            if (it.endsWith('liboperators.a')) {
-                                liboperators = it
-                            } else if (it.endsWith('liboperatorsTestSuite.a')) {
-                                liboperatorsTestSuite = it
-                            }
-                        }
-                        if (!liboperators.isEmpty() && args.remove(liboperators)) {
-                            args << '-Wl,--whole-archive'
-                            args << "${liboperators}"
-                            args << '-Wl,--no-whole-archive'
-                        }
-                        if (!liboperatorsTestSuite.isEmpty() && args.remove(liboperatorsTestSuite)) {
-                            args << '-Wl,--whole-archive'
-                            args << "${liboperatorsTestSuite}"
-                            args << '-Wl,--no-whole-archive'
-                        }
-                    }
-                }
-            }
-        }
-        visualCpp(VisualCpp) {
-            eachPlatform {
-                if (project.hasProperty('catch') || project.hasProperty('code_coverage')) {
-                    linker.withArguments { args ->
-                        def liboperators = ''
-                        def liboperatorsTestSuite = ''
-                        args.each {
-                            if (it.endsWith('operators.lib')) {
-                                liboperators = it
-                            } else if (it.endsWith('operatorsTestSuite.lib')) {
-                                liboperatorsTestSuite = it
-                            }
-                        }
-                        if (!liboperators.isEmpty() && args.remove(liboperators)) {
-                            args << "/WHOLEARCHIVE:${liboperators}"
-                        }
-                        if (!liboperatorsTestSuite.isEmpty() && args.remove(liboperatorsTestSuite)) {
-                            args << "/WHOLEARCHIVE:${liboperatorsTestSuite}"
-                        }
-                    }
-                }
-            }
-        }
     }
     components {
         operators(NativeLibrarySpec)
@@ -135,6 +43,19 @@ model {
             }
         }
     }
+    catchTests {
+        testDrivers {
+            operatorsTestDriver(plugins.catchtest.CatchTestDriver)
+        }
+        testSuites {
+            operatorsTestSuite(plugins.catchtest.CatchTestSuite)
+        }
+    }
+    codeCoverage {
+        wholeArchives {
+            operators(plugins.catchtest.codecoverage.WholeArchive)
+        }
+    }
     binaries {
         withType(SharedLibraryBinarySpec) {
             buildable = false // only want static libraries
@@ -154,121 +75,5 @@ model {
                 }
             }
         }
-    }
-    tasks {
-        testCodeCoverage(Exec) {
-            description = 'Run x64 test suite with code coverage options'
-            group = 'Test'
-            $.components.operatorsTestDriver.binaries.each {
-                if (it.buildable && it.targetPlatform.architecture.amd64
-                        && it.buildType == buildTypes.codeCoverage) {
-                    dependsOn tasks.getByPath('operatorsTestDriverLinux64CodeCoverageExecutable')
-
-                    // We not only want to build the test driver with the
-                    // supporting code coverage flags, but we want to run it.
-                    // We need to run the test driver to generate gcov's *.gcda
-                    // files.
-                    commandLine it.executable.file
-                }
-            }
-            standardOutput = new ByteArrayOutputStream()
-            ext.output = {
-                return standardOutput.toString()
-            }
-            doLast {
-                if (!project.hasProperty('code_coverage')) {
-                    throw new GradleException(
-                            "Property 'code_coverage' must be defined"
-                            + " for the build type 'codeCoverage'")
-                }
-            }
-        }
-        testX86(Exec) {
-            description = 'Run x86 test suite on release build'
-            group = 'Test'
-            $.components.operatorsTestDriver.binaries.each {
-                if (it.buildable && it.targetPlatform.architecture.i386
-                        && it.buildType == buildTypes.release) {
-                    dependsOn tasks.getByPath("operatorsTestDriver${osName}32ReleaseExecutable")
-                    commandLine it.executable.file
-                }
-            }
-            standardOutput = new ByteArrayOutputStream()
-            ext.output = {
-                return standardOutput.toString()
-            }
-            doLast {
-                if (!project.hasProperty('catch')) {
-                    throw new GradleException(
-                            "Property 'catch' must be defined for the task"
-                            + " '${name}'")
-                }
-            }
-        }
-        testX64(Exec) {
-            description = 'Run x64 test suite on release build'
-            group = 'Test'
-            $.components.operatorsTestDriver.binaries.each {
-                if (it.buildable && it.targetPlatform.architecture.amd64
-                        && it.buildType == buildTypes.release) {
-                    dependsOn tasks.getByPath("operatorsTestDriver${osName}64ReleaseExecutable")
-                    commandLine it.executable.file
-                }
-            }
-            standardOutput = new ByteArrayOutputStream()
-            ext.output = {
-                return standardOutput.toString()
-            }
-            doLast {
-                if (!project.hasProperty('catch')) {
-                    throw new GradleException(
-                            "Property 'catch' must be defined for the task"
-                            + " '${name}'")
-                }
-            }
-        }
-        printTestReports(Task) {
-            dependsOn testX86, testX64
-            description = 'Run x86 and x64 test suites and print results to console'
-            group = 'Test'
-
-            doLast {
-                (1..30).each { print '=' }
-                print ' x86 Test Results '
-                (1..31).each { print '=' }
-                println()
-                println testX86.output()
-
-                (1..30).each { print '=' }
-                print ' x64 Test Results '
-                (1..31).each { print '=' }
-                println()
-                println testX64.output()
-            }
-        }
-        writeTestReports(Task) {
-            dependsOn testX86, testX64
-            description = 'Run x86 and x64 test suites and write results to file'
-            group = 'Test'
-            
-            def x86Report = new File("${buildDir}/reports/tests/x86_report.txt")
-            def x64Report = new File("${buildDir}/reports/tests/x64_report.txt")
-            outputs.dir new File("${buildDir}/reports/tests")
-            outputs.files x86Report, x64Report
-            doLast {
-                x86Report.parentFile.mkdirs()
-                x64Report.parentFile.mkdirs()
-                x86Report << testX86.output()
-                x64Report << testX64.output()
-            }
-        }
-        test(Task) {
-            dependsOn printTestReports, writeTestReports
-            description = 'Run all tests and print and write their results'
-            group = 'Test'
-        }
-    }
-    tasks.check {
-        dependsOn test
     }
 }

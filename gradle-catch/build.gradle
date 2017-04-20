@@ -1,13 +1,19 @@
 model {
     tasks {
+        createLcovOutputDirectory(Task) {
+            outputs.dir file("${rootDir}/build/code-coverage/lcov")
+            doLast {
+                mkdir file("${rootDir}/build/code-coverage/lcov")
+            }
+        }
         lcovCodeCoverage(Exec) {
             description = 'Generate code coverage data using lcov'
             group = 'Test'
+            dependsOn createLcovOutputDirectory
             subprojects.each {
                 dependsOn it.tasks.getByPath("${it.path}:testCodeCoverage")
             }
-            def outputFile = "${rootDir}/build/code-coverage/lcov/lcov_output.info"
-            new File(outputFile).parentFile.mkdirs()
+            def outputFile = "${createLcovOutputDirectory.outputs.files.singleFile}/lcov_output.info"
             workingDir "${rootDir}"
             commandLine(
                     'lcov',

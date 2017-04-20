@@ -1,0 +1,281 @@
+apply plugin: 'catch'
+
+buildscript {
+    apply from: "${rootDir}/gradle/buildscript-utils.gradle", to: buildscript
+}
+
+import static org.apache.commons.lang3.SystemUtils.IS_OS_LINUX
+import static org.apache.commons.lang3.SystemUtils.IS_OS_WINDOWS
+
+// platformOSName is the operating system name used in the target platforms
+def platformOSName = 'Unknown'
+if (IS_OS_WINDOWS) {
+    platformOSName = 'Win'
+} else if (IS_OS_LINUX) {
+    platformOSName = 'Linux'
+}
+
+model {
+    repositories {
+        libs(PrebuiltLibraries) {
+            catch_testing {
+                headers.srcDir "${rootDir}/3rdparty/catch/headers"
+            }
+        }
+    }
+    toolChains {
+        gcc(Gcc) {
+            eachPlatform {
+                // When a codeCoverage executable is built, it statically links
+                // the libraries that are under test into the test driver
+                // executable. By default, only the object files that are
+                // required for the executable are statically linked. Because
+                // we want to measure code coverage (i.e., understand what code
+                // is and is not executed during the execution of the test
+                // driver), we want to link in object files that are not
+                // required by the executable. This way the code coverage
+                // reports will show us what object files aren't even covered
+                // by the test driver.
+                //
+                // Linking the entire static library into the executable is
+                // done using the "-Wl,--whole-archive" linker option.
+                //
+                // We don't always want to link the whole archive into the
+                // executable, only when we are testing with catch and when
+                // code coverage is to be measured. Thus, we constrain this by
+                // checking for the 'catch' and 'code_coverage' properties,
+                // respectively.
+                //
+                // This is a short-coming of Gradle. Ideally, there should be a
+                // way to modify the library linking options when declaring a
+                // dependency. However, Gradle gives us the ability to modify
+                // the tool-chain's linker options here, so this is an easy
+                // workaround.
+                //
+                // This also needs to be done tests are being run with Catch.
+                // See https://github.com/philsquared/Catch/issues/720.
+                if (project.hasProperty('catch')) {
+                    linker.withArguments { args ->
+                        def argsChanged = false
+                        $.catchTests.testSuites.each { testSuite ->
+                            def lib = ''
+                            args.each { arg ->
+                                if (arg.endsWith("lib${testSuite.name}.a")) {
+                                    lib = arg
+                                }
+                            }
+                            if (!lib.isEmpty() && args.remove(lib)) {
+                                args << '-Wl,--whole-archive'
+                                args << "${lib}"
+                                args << '-Wl,--no-whole-archive'
+                                argsChanged = true
+                            }
+                        }
+                        if (!$.catchTests.testSuites.isEmpty() && !argsChanged) {
+                            logger.warn("No catch test suites were used when linking")
+                        }
+                    }
+                }
+                if (project.hasProperty('code_coverage')) {
+                    linker.withArguments { args ->
+                        def argsChanged = false
+                        $.codeCoverage.wholeArchives.each { archive ->
+                            def lib = ''
+                            for (int i = 0; i < args.size(); i++) {
+                                if (i == 0 && args[i].endsWith("lib${archive.name}.a")) {
+                                    lib = args[i]
+                                } else if (args[i].endsWith("lib${archive.name}.a")
+                                        && !args[i-1].equals('-Wl,--whole-archive')) {
+                                    // avoid nesting '-Wl,--whole-archive'
+                                    lib = args[i]
+                                }
+                            }
+                            if (!lib.isEmpty() && args.remove(lib)) {
+                                args << '-Wl,--whole-archive'
+                                args << "${lib}"
+                                args << '-Wl,--no-whole-archive'
+                                argsChanged = true
+                            }
+                        }
+                        if (!$.codeCoverage.wholeArchives.isEmpty() && !argsChanged) {
+                            logger.warn("No static libraries were wholly linked")
+                        }
+                    }
+                }
+            }
+        }
+        visualCpp(VisualCpp) {
+            eachPlatform {
+                if (project.hasProperty('catch')) {
+                    linker.withArguments { args ->
+                        def argsChanged = false
+                        $.catchTests.testSuites.each { testSuite ->
+                            def lib = ''
+                            args.each { arg ->
+                                if (arg.endsWith("${testSuite.name}.lib")) {
+                                    lib = arg
+                                }
+                            }
+                            if (!lib.isEmpty() && args.remove(lib)) {
+                                args << "/WHOLEARCHIVE:${lib}"
+                                argsChanged = true
+                            }
+                        }
+                        if (!$.catchTests.testSuites.isEmpty() && !argsChanged) {
+                            logger.warn("No catch test suites were used when linking")
+                        }
+                    }
+                }
+                if (project.hasProperty('code_coverage')) {
+                    linker.withArguments { args ->
+                        def argsChanged = false
+                        $.codeCoverage.wholeArchives.each { archive ->
+                            def lib = ''
+                            args.each { arg ->
+                                if (arg.endsWith("${archive.name}.lib")
+                                        && !arg.startsWith('/WHOLEARCHIVE:')) {
+                                    // avoid nesting '/WHOLEARCHIVE'
+                                    lib = arg
+                                }
+                            }
+                            if (!lib.isEmpty() && args.remove(lib)) {
+                                args << "/WHOLEARCHIVE:${lib}"
+                                argsChanged = true
+                            }
+                        }
+                        if (!$.codeCoverage.wholeArchives.isEmpty() && !argsChanged) {
+                            logger.warn("No static libraries were wholly linked")
+                        }
+                    }
+                }
+            }
+        }
+    }
+    tasks {
+        testCodeCoverage(Exec) {
+            description = 'Run x64 test suite with code coverage options'
+            group = 'Test'
+            if ($.catchTests.testDrivers.isEmpty()) {
+                throw new GradleException(
+                        'A test driver must exist for code coverage to run')
+            } else if ($.catchTests.testDrivers.size() > 1) {
+                logger.warn('Only one test driver is supported for code coverage')
+            }
+            def testDriver = $.catchTests.testDrivers[0].name
+            $.components["${testDriver}"].binaries.each {
+                if (it.buildable && it.targetPlatform.architecture.amd64
+                        && it.buildType == buildTypes.codeCoverage) {
+                    dependsOn tasks.getByPath("${testDriver}Linux64CodeCoverageExecutable")
+
+                    // We not only want to build the test driver with the
+                    // supporting code coverage flags, but we want to run it.
+                    // We need to run the test driver to generate gcov's *.gcda
+                    // files.
+                    commandLine it.executable.file
+                }
+            }
+            standardOutput = new ByteArrayOutputStream()
+            ext.output = {
+                return standardOutput.toString()
+            }
+            doLast {
+                if (!project.hasProperty('code_coverage')) {
+                    throw new GradleException(
+                            "Property 'code_coverage' must be defined"
+                            + " for the build type 'codeCoverage'")
+                }
+            }
+        }
+        testX86(Exec) {
+            description = 'Run x86 test suite on release build'
+            group = 'Test'
+            $.catchTests.testDrivers.each { testDriver ->
+                $.components["${testDriver.name}"].binaries.each {
+                    if (it.buildable && it.targetPlatform.architecture.i386
+                            && it.buildType == buildTypes.release) {
+                        dependsOn tasks.getByPath("${testDriver.name}${platformOSName}32ReleaseExecutable")
+                        commandLine it.executable.file
+                    }
+                }
+            }
+            standardOutput = new ByteArrayOutputStream()
+            ext.output = {
+                return standardOutput.toString()
+            }
+            doLast {
+                if (!project.hasProperty('catch')) {
+                    throw new GradleException(
+                            "Property 'catch' must be defined for the task"
+                            + " '${name}'")
+                }
+            }
+        }
+        testX64(Exec) {
+            description = 'Run x64 test suite on release build'
+            group = 'Test'
+            $.catchTests.testDrivers.each { testDriver ->
+                $.components["${testDriver.name}"].binaries.each {
+                    if (it.buildable && it.targetPlatform.architecture.amd64
+                            && it.buildType == buildTypes.release) {
+                        dependsOn tasks.getByPath("${testDriver.name}${platformOSName}64ReleaseExecutable")
+                        commandLine it.executable.file
+                    }
+                }
+            }
+            standardOutput = new ByteArrayOutputStream()
+            ext.output = {
+                return standardOutput.toString()
+            }
+            doLast {
+                if (!project.hasProperty('catch')) {
+                    throw new GradleException(
+                            "Property 'catch' must be defined for the task"
+                            + " '${name}'")
+                }
+            }
+        }
+        printTestReports(Task) {
+            dependsOn testX86, testX64
+            description = 'Run x86 and x64 test suites and print results to console'
+            group = 'Test'
+
+            doLast {
+                (1..30).each { print '=' }
+                print ' x86 Test Results '
+                (1..31).each { print '=' }
+                println()
+                println testX86.output()
+
+                (1..30).each { print '=' }
+                print ' x64 Test Results '
+                (1..31).each { print '=' }
+                println()
+                println testX64.output()
+            }
+        }
+        writeTestReports(Task) {
+            dependsOn testX86, testX64
+            description = 'Run x86 and x64 test suites and write results to file'
+            group = 'Test'
+            
+            def x86Report = new File("${buildDir}/reports/tests/x86_report.txt")
+            def x64Report = new File("${buildDir}/reports/tests/x64_report.txt")
+            outputs.dir new File("${buildDir}/reports/tests")
+            outputs.files x86Report, x64Report
+            doLast {
+                x86Report.parentFile.mkdirs()
+                x64Report.parentFile.mkdirs()
+                x86Report << testX86.output()
+                x64Report << testX64.output()
+            }
+        }
+        runCatchTestSuites(Task) {
+            dependsOn printTestReports, writeTestReports
+            description = 'Run all tests and print and write their results'
+            group = 'Test'
+        }
+    }
+    tasks.check {
+        dependsOn runCatchTestSuites
+    }
+}
